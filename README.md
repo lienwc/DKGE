@@ -1,2 +1,2 @@
 # DKGE
-This is the dataset of DKGE.
+These are the dynamic datasets used for dynamic knowledge graph embedding.
