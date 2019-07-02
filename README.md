@@ -1,2 +1,2 @@
 # DKGE
-This is the source code of DKGE.
+This is the dataset of DKGE.
