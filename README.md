@@ -1,2 +1,2 @@
 # DKGE
-These are the dynamic datasets used for dynamic knowledge graph embedding.
+These are the source code and dynamic datasets used for dynamic knowledge graph embedding.
