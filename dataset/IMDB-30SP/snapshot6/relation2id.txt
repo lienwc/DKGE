@@ -1,0 +1,15 @@
+14
+knownFor	0
+writer	1
+actor	2
+actress	3
+composer	4
+self	5
+director	6
+parent	7
+producer	8
+archive_footage	9
+cinematographer	10
+editor	11
+production_designer	12
+archive_sound	13
