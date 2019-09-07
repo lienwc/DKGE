@@ -70,7 +70,7 @@ def convert_id_to_text(train_list, dataset):
 
 
 def read_file(file_name):
-    # 用于读取训练、测试和验证数据
+    # for reading train, test and valid data
     data = []  # [(h, r, t)]
     with open(file_name) as f:
         lines = f.readlines()
@@ -130,7 +130,7 @@ print('init_with_transe: ' + str(init_with_transe))
 print('result directory: ' + str(res_dir))
 
 
-# 经过一条边或两条边得到的所有路径 {entity: [[path]}
+# {entity: [[path]}
 def get_1or2_path_from_head(head_ent, rel, entity_adj_table_with_rel):
     paths = {}  # actually second-order + first-order, {entity: [[edge]]}
     first_order_entity = set()
@@ -140,7 +140,7 @@ def get_1or2_path_from_head(head_ent, rel, entity_adj_table_with_rel):
         return paths
     for tail_entity, relation in entity_adj_table_with_rel[head_ent]:
         first_order_entity.add(tail_entity)
-        if relation != rel:     # 不包含关系自己
+        if relation != rel:
             if tail_entity in paths:
                 paths[tail_entity].append([relation])
             else:
@@ -167,16 +167,12 @@ def get_1or2_path_from_head(head_ent, rel, entity_adj_table_with_rel):
 
 
 def find_relation_context(h, r, t, entity_adj_table_with_rel):
-    # 经过一条边或两条边得到的所有路径 {entity: [[edge]]}
+    #{entity: [[edge]]}
     tail_ent2paths = get_1or2_path_from_head(h, r, entity_adj_table_with_rel)
     return tail_ent2paths.get(t, [])
 
 
 def construct_adj_table(train_list):
-    # 构建实体和关系的邻居dict (entity_adj_table和relation_adj_table)
-    # 同时提前构建好每一个实体和关系的上下文子图所对应的邻接矩阵A和度矩阵D
-    # 并提前计算好GCN中要用到的D^(-1/2)*A*D^(-1/2)，存储在entity_DAD和relation_DAD中
-
     entity_adj_table_with_rel = dict()  # {head_entity: [(tail_entity, relation)]}
     entity_adj_table = dict()  # {head_entity: [tail_entity]}
     relation_adj_table = dict()  # {relation: [[edge]]}
@@ -204,7 +200,6 @@ def construct_adj_table(train_list):
     for k, v in relation_adj_table.items():
         relation_adj_table[k] = set([tuple(i) for i in v])
 
-    # 上下文数量超过最大限制的部分进行截断
     if max_context_num_constraint:
         max_context_num = max_context
         for k, v in entity_adj_table.items():
@@ -227,8 +222,6 @@ def construct_adj_table(train_list):
     entity_DAD = torch.Tensor(entity_total, max_context_num + 1, max_context_num + 1).cuda()
     relation_DAD = torch.Tensor(relation_total, max_context_num + 1, max_context_num + 1).cuda()
 
-    # 构建每个实体的上下文子图的邻接矩阵和度矩阵，并计算好D^(-1/2)*A*D^(-1/2)存储在entity_DAD中
-    # 这里的A其实是 A + I (I是单位矩阵), D是A + I 的度矩阵
     for entity in range(entity_total):
         A = torch.eye(max_context_num + 1, max_context_num + 1).cuda()
         tmp = torch.ones(max_context_num + 1).cuda()
@@ -240,7 +233,6 @@ def construct_adj_table(train_list):
         D[i, i] = 2
         D[0][0] = max_context_num + 1
 
-        # 统计除子图中心节点以外的节点 之间的连接情况
         if entity in entity_adj_table:
             neighbours_list = list(entity_adj_table[entity])
             for index, neighbour in enumerate(neighbours_list):
@@ -253,15 +245,12 @@ def construct_adj_table(train_list):
                         A[index+1, index2+1] = 1
                         D[index+1][index+1] += 1
 
-        # 计算D^(-1/2)
         D = np.linalg.inv(D)
         D = torch.Tensor(D).cuda()
         D[i, i] = torch.sqrt(D[i, i])
 
-        # 计算D^(-1/2)*A*D^(-1/2),后面GCN会用到
         entity_DAD[entity] = D.mm(A).mm(D)
 
-    # 关系的上下文子图的邻接矩阵和度矩阵的构建，流程同上面的实体构建流程
     for relation in range(relation_total):
         A = torch.eye(max_context_num + 1, max_context_num + 1).cuda()
         tmp = torch.ones(max_context_num + 1).cuda()
@@ -294,17 +283,10 @@ def construct_adj_table(train_list):
 
         relation_DAD[relation] = D.mm(A).mm(D)
 
-    # 实体上下文补padding,
-    # 补的部分的实体ID都是entity_total,这个ID在实体context向量矩阵中最后一行，初始化的时候这一行会被初始化为0
     for k, v in entity_adj_table.items():
         res = list(v)
         entity_adj_table[k] = res + [entity_total] * (max_context_num - len(res))  # 补padding
 
-    # 关系上下文补padding,
-    # 补的部分的关系的ID都是relation_total,这个ID在关系context向量矩阵中最后一行，初始化的时候这一行会被初始化为0
-    # 关系的上下文可能是长度为1的path(即一个关系)，也可能是和两个关系构成的path，因此如果上下文长度为1，
-    # 则补一个ID为relation_total的关系，如果上下文长度为2，则不补。
-    # 关系上下文数量不足max_context_num时，补n个path(每个path由两个ID为relation_total的关系构成)直至达到max_context_num
     for k, v in relation_adj_table.items():
         res = []
         for i in v:
@@ -314,7 +296,7 @@ def construct_adj_table(train_list):
             else:
                 res.extend(list(i))
 
-        relation_adj_table[k] = res + [relation_total] * 2 * (max_context_num - len(res) // 2)  # 补padding
+        relation_adj_table[k] = res + [relation_total] * 2 * (max_context_num - len(res) // 2)
 
     return entity_adj_table, relation_adj_table, max_context_num, entity_DAD, relation_DAD
     # return entity_adj_table, max_context_num, entity_DAD
@@ -325,7 +307,6 @@ entity_adj_table, relation_adj_table, max_context_num, entity_A, relation_A = co
 print("Constructing adj table completed.")
 
 
-# 计算伯努利负采样的先验概率
 def bern_sampling_prepare(train_list):
     head2count = dict()
     tail2count = dict()
@@ -345,8 +326,6 @@ def bern_sampling_prepare(train_list):
 
     return tph, hpt
 
-
-# 负采样
 def one_negative_sampling(golden_triple, train_set, tph=0.0, hpt=0.0):
     negative_triple = tuple()
     h, r, t = golden_triple
@@ -388,11 +367,7 @@ def one_negative_sampling(golden_triple, train_set, tph=0.0, hpt=0.0):
 
     return negative_triple
 
-
-# 提前进行负采样，如果最大训练次数是1000，则提前准备好1000组负采样的数据
-# 这样做是为了训练过程中不需要再进行负采样，提升训练速度
 def prepare_data():
-    '''生成正例和负例'''
     phs = np.zeros(len(train_list), dtype=int)
     prs = np.zeros(len(train_list), dtype=int)
     pts = np.zeros(len(train_list), dtype=int)
@@ -416,7 +391,6 @@ def prepare_data():
         nhs).cuda(), torch.IntTensor(nrs).cuda(), torch.IntTensor(nts).cuda()
 
 
-# 获取给定batch的正例和负例数据
 def get_batch(batch, epoch, phs, prs, pts, nhs, nrs, nts):
     r = min((batch + 1) * batch_size, len(phs))
 
@@ -424,13 +398,11 @@ def get_batch(batch, epoch, phs, prs, pts, nhs, nrs, nts):
            (nhs[epoch, batch * batch_size: r], nrs[epoch, batch * batch_size: r], nts[epoch, batch * batch_size: r])
 
 
-# 获取给定batch数据的邻接矩阵A（其实是计算好的D^(-1/2)*A*D^(-1/2))
 def get_batch_A(triples):
     h, r, t = triples
     return entity_A[h.cpu().numpy()], relation_A[r.cpu().numpy()], entity_A[t.cpu().numpy()]
 
 
-# 获取测试时test_head要用到的head_batch
 def get_head_batch(golden_triple):
     head_batch = np.zeros((entity_total, 3), dtype=np.int32)
     head_batch[:, 0] = np.array(list(range(entity_total)))
@@ -439,7 +411,6 @@ def get_head_batch(golden_triple):
     return head_batch
 
 
-# 获取测试时test_tail要用到的tail_batch
 def get_tail_batch(golden_triple):
     tail_batch = np.zeros((entity_total, 3), dtype=np.int32)
     tail_batch[:, 0] = np.array([golden_triple[0]] * entity_total)
@@ -557,13 +528,11 @@ def get_affected_relations(snapshot2_train_set, relation_set1, relation_set2):
         relation_context_dict[relation] = set()
         for nodes in nodes_set:
             head, tail = nodes[:2]
-            # 一阶关系
             for edge in head_entity_dict[head]:
                 if edge[1] == tail:
                     relation_context_dict[relation].add(edge[0])
             relation_context_dict[relation].remove(relation)
 
-            # 二阶关系
             for edge1 in head_entity_dict[head]:
                 if edge1[1] in head_entity_dict:
                     for edge2 in head_entity_dict[edge1[1]]:
