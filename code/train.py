@@ -90,7 +90,6 @@ class DynamicKGE(nn.Module):
 
     def get_entity_context(self, entities):
         '''
-        每个entity的context都对应着一个list，那么entities中的所有entity的context拼接成一个大list
         :param entities: [e, ..., e]
         :return:
         '''
@@ -109,11 +108,6 @@ class DynamicKGE(nn.Module):
         return torch.LongTensor(relations_context).cuda()
 
     def get_adj_entity_vec(self, entity_vec_list, adj_entity_list):
-        '''
-        :param entity_vec_list: 实体上下文子图的中心实体的向量
-        :param adj_entity_list: 邻居实体的list
-        :return:子图中心实体的向量和邻居实体的上下文向量拼接而成的向量矩阵
-        '''
         # adj_entity_vec_list = self.entity_context[adj_entity_list]
         adj_entity_vec_list = self.entity_context(adj_entity_list)
         adj_entity_vec_list = adj_entity_vec_list.view(-1, config.max_context_num, config.dim)
@@ -121,27 +115,15 @@ class DynamicKGE(nn.Module):
         return torch.cat((entity_vec_list.unsqueeze(1), adj_entity_vec_list), dim=1)
 
     def get_adj_relation_vec(self, relation_vec_list, adj_relation_list):
-        '''
-        :param relation_vec_list: 关系上下文子图的中心关系的向量
-        :param adj_relation_list: 关系上下文的List
-        :return: 中心关系的向量及其上下文path的向量拼接而成的向量矩阵
-        '''
         # adj_relation_vec_list = self.relation_context[adj_relation_list]
         adj_relation_vec_list = self.relation_context(adj_relation_list)
         adj_relation_vec_list = adj_relation_vec_list.view(-1, config.max_context_num, 2,
                                                            config.dim).cuda()
-        adj_relation_vec_list = torch.sum(adj_relation_vec_list, dim=2)  # 将每个path求和
+        adj_relation_vec_list = torch.sum(adj_relation_vec_list, dim=2)
 
         return torch.cat((relation_vec_list.unsqueeze(1), adj_relation_vec_list), dim=1)
 
     def score(self, o, adj_vec_list, target='entity'):
-        '''
-        计算attention的score值
-        :param o: 实体或关系的自身向量
-        :param adj_vec_list: o所对应的上下文子图中所有节点的向量矩阵
-        :param target:
-        :return: attention的score值
-        '''
         os = torch.cat(tuple([o] * (config.max_context_num+1)), dim=1).reshape(-1, config.max_context_num+1, config.dim)
         tmp = F.relu(torch.mul(adj_vec_list, os), inplace=False)  # batch x max x 2dim
         if target == 'entity':
@@ -151,13 +133,6 @@ class DynamicKGE(nn.Module):
         return score
 
     def calc_subgraph_vec(self, o, adj_vec_list, target="entity"):
-        '''
-        通过attention进行加权求和得到子图向量
-        :param o: 实体或关系的自身向量
-        :param adj_vec_list: o所对应的上下文子图中所有节点的向量矩阵
-        :param target:
-        :return:
-        '''
         alpha = self.score(o, adj_vec_list, target)
         alpha = F.softmax(alpha)
 
@@ -194,7 +169,6 @@ class DynamicKGE(nn.Module):
         f.close()
 
     def save_phrt_o(self, pos_h, pos_r, pos_t, ph_o, pr_o, pt_o):
-        # 保存经过前向传播后得到的h*, r*, t*的向量，方便测试时直接读取该向量，进行h+r-t的计算
         for i in range(len(pos_h)):
             h = str(int(pos_h[i]))
             self.pht_o[h] = ph_o[i].detach().cpu().numpy().tolist()
@@ -210,7 +184,6 @@ class DynamicKGE(nn.Module):
         pos_h, pos_r, pos_t = golden_triples
         neg_h, neg_r, neg_t = negative_triples
 
-        # 获取正负例的自身向量
         p_h = self.entity_emb[pos_h.cpu().numpy()]
         p_t = self.entity_emb[pos_t.cpu().numpy()]
         p_r = self.relation_emb[pos_r.cpu().numpy()]
@@ -218,15 +191,13 @@ class DynamicKGE(nn.Module):
         n_t = self.entity_emb[neg_t.cpu().numpy()]
         n_r = self.relation_emb[neg_r.cpu().numpy()]
 
-        # 获取正负例中实体和关系的上下文
         ph_adj_entity_list = self.get_entity_context(pos_h)
         pt_adj_entity_list = self.get_entity_context(pos_t)
         nh_adj_entity_list = self.get_entity_context(neg_h)
         nt_adj_entity_list = self.get_entity_context(neg_t)
         pr_adj_relation_list = self.get_relation_context(pos_r)
         nr_adj_relation_list = self.get_relation_context(neg_r)
-
-        # 根据上下文List取出上下文向量，并和中心节点的向量拼接成一个向量矩阵
+        
         ph_adj_entity_vec_list = self.get_adj_entity_vec(p_h, ph_adj_entity_list)
         pt_adj_entity_vec_list = self.get_adj_entity_vec(p_t, pt_adj_entity_list)
         nh_adj_entity_vec_list = self.get_adj_entity_vec(n_h, nh_adj_entity_list)
@@ -242,7 +213,6 @@ class DynamicKGE(nn.Module):
         pr_adj_relation_vec_list = self.gcn(pr_A, pr_adj_relation_vec_list, target='relation')
         nr_adj_relation_vec_list = self.gcn(nr_A, nr_adj_relation_vec_list, target='relation')
 
-        # attention求上下文子图向量
         ph_sg = self.calc_subgraph_vec(p_h, ph_adj_entity_vec_list, target='entity')
         pt_sg = self.calc_subgraph_vec(p_t, pt_adj_entity_vec_list, target='entity')
         nh_sg = self.calc_subgraph_vec(n_h, nh_adj_entity_vec_list, target='entity')
@@ -250,7 +220,6 @@ class DynamicKGE(nn.Module):
         pr_sg = self.calc_subgraph_vec(p_r, pr_adj_relation_vec_list, target='relation')
         nr_sg = self.calc_subgraph_vec(n_r, nr_adj_relation_vec_list, target='relation')
 
-        # 使用gate 对实体(关系)向量和上下文子图向量进行结合
         ph_o = torch.mul(F.sigmoid(self.gate_entity), p_h) + torch.mul(1 - F.sigmoid(self.gate_entity), ph_sg)
         pt_o = torch.mul(F.sigmoid(self.gate_entity), p_t) + torch.mul(1 - F.sigmoid(self.gate_entity), pt_sg)
         nh_o = torch.mul(F.sigmoid(self.gate_entity), n_h) + torch.mul(1 - F.sigmoid(self.gate_entity), nh_sg)
